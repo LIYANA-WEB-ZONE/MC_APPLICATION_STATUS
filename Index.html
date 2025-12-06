@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APPLICATION STATUS</title>
+
+<style>
+  /* --- Styling for Mobile Responsiveness and Aesthetics --- */
+  body {
+    font-family: Poppins, sans-serif;
+    background: #eef2f7;
+    display: flex;
+    justify-content: center;
+    padding: 20px;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  .container {
+    text-align: center;
+    background: white;
+    padding: 30px 20px 40px 20px;
+    border-radius: 20px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.15);
+    width: 380px;
+    max-width: 95vw; 
+  }
+
+  input {
+    padding: 10px;
+    width: 160px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    text-align: center;
+  }
+
+  button {
+    padding: 10px 15px;
+    background: #007bff; /* Blue color */
+    border: none;
+    color: white;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-left: 5px;
+    transition: background 0.3s;
+  }
+  button:hover {
+      background: #0056b3;
+  }
+  
+  /* Circular Progress Bar Styling */
+  .circle {
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    position: relative;
+    margin: 20px auto;
+    /* Default is green for processing, using CSS variable --progress */
+    background: conic-gradient(#28a745 var(--progress, 0%), #ddd var(--progress, 0%));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.5s; /* Smooth color transition on hold/complete */
+  }
+  
+  /* Style for HOLD status (Yellow) */
+  .circle.on-hold {
+      /* Background is set dynamically in JS to apply current progress with yellow */
+  }
+  .circle.on-hold .percent-text {
+      color: #ffc107;
+  }
+  /* Style for Processing/Complete (Green) */
+  .circle.processing .percent-text {
+      color: #28a745;
+  }
+
+
+  .circle::before {
+    content: '';
+    position: absolute;
+    top: 12px; left: 12px;
+    right: 12px; bottom: 12px;
+    background: white;
+    border-radius: 50%;
+  }
+
+  .percent-text {
+    position: relative;
+    font-size: 36px;
+    font-weight: bold;
+    color: #28a745; 
+    z-index: 2;
+  }
+
+  .label {
+    font-weight: bold;
+    margin-top: 10px;
+    font-size: 16px;
+  }
+
+  /* Summary Section Styling */
+  .summary {
+    text-align: left;
+    margin-top: 25px;
+    border-top: 2px solid #e74c3c;
+    padding-top: 15px;
+    display: none;
+  }
+
+  .summary h3 {
+    color: #333;
+    margin-bottom: 35px;
+    text-align: center;
+  }
+
+  .summary p {
+    margin: 10px 0;
+    line-height: 1.6;
+    font-size: 14px;
+  }
+
+  .summary b {
+    color: #000;
+  }
+
+  .summary a {
+    font-weight: bold;
+    color: #e74c3c; /* Default inactive link color (Red) */
+    text-decoration: none;
+    pointer-events: none; /* Disable interaction when inactive */
+    transition: color 0.3s;
+  }
+
+  /* Active link style (Green) */
+  .summary a.active-link {
+    color: #28a745 !important; 
+    text-decoration: underline;
+    pointer-events: auto; /* Enable interaction when active */
+  }
+  
+  #error-message {
+    color: #e74c3c;
+    font-weight: bold;
+    margin-top: 10px;
+    min-height: 20px;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h2>APPLICATION STATUS</h2>
+    <input type="text" id="appIdInput" placeholder="Application Number">
+    <button onclick="checkStatus()">Check</button>
+    
+    <div class="circle" id="progressCircle" style="--progress: 0%;">
+      <div class="percent-text" id="percentText">0%</div>
+    </div>
+    <div class="label" id="statusLabel"></div>
+    <div id="error-message"></div>
+
+    <div class="summary" id="summary">
+      <h3>Application Summary</h3>
+      <p><b>Full Name:</b> <span id="fullName"></span></p>
+      <p><b>NRIC Number:</b> <span id="nicNumber"></span></p>
+      <p><b>Documents Number:</b> <span id="docNumber"></span></p>
+      <p><b>Application Type:</b> <span id="appType"></span></p>
+      <p><b>Application Status:</b> <span id="appStatus"></span></p>
+      <p><b>Creation Time:</b> <span id="creationTime">N/A</span></p> 
+      <p><b>Completion Time:</b> <span id="completionTime">N/A</span></p> 
+      <p><b>Download Letter:</b> <a id="downloadLetter" href="#" target="_blank">Download</a></p>
+    </div>
+  </div>
+
+<script>
+  // --- Google Sheet Configuration ---
+  // ⚠️ IMPORTANT: Replace this with your Google Sheet ID.
+  const SHEET_ID = '1rbTglIy8VJEJcbfz1s0J_6HUwzpHrpxJzJuP6e56Nm0'; 
+  // ⚠️ IMPORTANT: Replace with the GID of the specific sheet (tab). Default is '0'.
+  const GID = '0'; 
+  
+  // Google Visualization API URL to fetch data (Columns: A,B,C,D,E,F,G,H,I,J)
+  const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}&tq=select%20A,B,C,D,E,F,G,H,I,J`;
+  
+  const DEFAULT_DURATION_MS = 120000; // Default time (2 minutes)
+
+  let currentAnimationId = null; 
+  let statusPollingInterval = null; 
+  let applicationsCache = {}; 
+
+  let currentAppDetails = {
+    appId: null,
+    startTime: 0,
+    durationMs: DEFAULT_DURATION_MS,
+    data: null, 
+    isCurrentlyHeld: false 
+  };
+
+
+  /**
+   * Fetches and parses data from the Google Sheet using the Visualization API.
+   */
+  async function fetchSheetData() {
+      try {
+          // **Fetch attempt:** This line works correctly on a web server (like GitHub Pages).
+          const response = await fetch(SHEET_URL); 
+          
+          if (window.location.protocol === 'file:') {
+              // Specific error for local file access (CORS issue)
+               throw new Error("Local file security error (CORS). This app MUST run on a web server (GitHub Pages/Live Server) to fetch data from Google Sheets.");
+          }
+          if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          
+          const text = await response.text();
+          
+          const match = text.match(/google\.visualization\.Query\.setResponse\((.*)\);/);
+          if (!match || !match[1]) {
+             throw new Error("Error fetching data from Google Sheet. (Incorrect Sheet ID/GID or access denied.)");
+          }
+          
+          const jsonText = match[1];
+          const data = JSON.parse(jsonText);
+          const table = data.table;
+          
+          if (!table || !table.cols || !table.rows || table.rows.length === 0) {
+              throw new Error("Invalid table structure in Google Sheet response or Sheet is empty.");
+          }
+
+          const applications = {};
+          // Column Map based on the sheet structure
+          const colMap = {
+              'App ID': 0, 
+              'Full Name': 1, 
+              'NRIC Number': 2, 
+              'Doc Number': 3, 
+              'Type': 4, 
+              'Letter URL': 5, 
+              'Timestamp': 6, 
+              'Hold Status': 7, 
+              'App Duration': 8, 
+              'Duration Minutes (Global)': 9, 
+          };
+          
+          // 1. Get Global Duration from J1 (First row, 10th column)
+          const globalDurationCell = table.rows[0].c[colMap['Duration Minutes (Global)']]?.v; 
+          let globalDurationMinutes = 2; // Default 2
+          
+          if (typeof globalDurationCell === 'number' && globalDurationMinutes > 0) {
+              globalDurationMinutes = globalDurationCell;
+          }
+          const GLOBAL_DURATION_MS = globalDurationMinutes * 60 * 1000;
+
+
+          // 2. Populate application data
+          table.rows.forEach(row => {
+              const appId = row.c[colMap['App ID']]?.v?.toString().trim();
+              if (appId) {
+                  const timeString = row.c[colMap['Timestamp']]?.f || row.c[colMap['Timestamp']]?.v;
+                  const holdStatus = (row.c[colMap['Hold Status']]?.v || '').toString().toUpperCase().trim(); 
+                  const individualDurationCell = row.c[colMap['App Duration']]?.v; 
+                  let finalDurationMs = GLOBAL_DURATION_MS;
+
+                  if (typeof individualDurationCell === 'number' && individualDurationCell > 0) {
+                      finalDurationMs = individualDurationCell * 60 * 1000;
+                  }
+                  
+                  let startTimeMs = 0;
+                  if (timeString) {
+                      let correctedTimeString = timeString;
+                      
+                      // 💡 FIX: Explicitly mark the timestamp as being in the Sheet's Timezone 
+                      // (assumed GMT+0800 for Malaysia) to ensure it is parsed correctly as UTC time 
+                      // regardless of the user's location (e.g., Sri Lanka).
+                      if (!/\s[+-]\d{4}$|Z$/i.test(timeString)) {
+                           // If no timezone is present, assume GMT+0800 (Malaysia)
+                           correctedTimeString = timeString + ' GMT+0800'; 
+                      }
+
+                      const dateObj = new Date(correctedTimeString);
+                      if (!isNaN(dateObj.getTime())) {
+                          startTimeMs = dateObj.getTime(); // This is the UTC Epoch time
+                      }
+                  }
+
+                  applications[appId] = {
+                      name: row.c[colMap['Full Name']]?.v || 'N/A',
+                      nic: row.c[colMap['NRIC Number']]?.v || 'N/A', 
+                      docNumber: row.c[colMap['Doc Number']]?.v || 'N/A',
+                      type: row.c[colMap['Type']]?.v || 'N/A',
+                      letter: row.c[colMap['Letter URL']]?.v || '#', 
+                      startTime: startTimeMs,
+                      isHeld: holdStatus === 'HOLD' || holdStatus === 'YES',
+                      durationMs: finalDurationMs, 
+                  };
+              }
+          });
+
+          if (Object.keys(applications).length === 0) {
+             throw new Error("No application data found in the Sheet.");
+          }
+
+          applicationsCache = applications;
+          return { applications, globalDurationMs: currentAppDetails.durationMs }; 
+      } catch (error) {
+          // If fetch fails but cache exists, use cache to prevent breaking
+          if (!applicationsCache || Object.keys(applicationsCache).length === 0) {
+              throw error; // Re-throw the original error if no cache exists
+          }
+          return { applications: applicationsCache, globalDurationMs: currentAppDetails.durationMs }; 
+      }
+  }
+
+  // --- Helper Functions ---
+  function formatDateTime(date){
+    if (!date || isNaN(date.getTime())) return 'N/A';
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    let hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    hours = String(hours).padStart(2, '0'); 
+    return `${yyyy}.${mm}.${dd} | ${hours}:${minutes}:${seconds} ${ampm}`;
+  }
+
+  // Live clock display
+  function updateClock(){
+    // This displays the time according to the user's local timezone (e.g., Sri Lanka)
+    document.getElementById("statusLabel").innerText = formatDateTime(new Date()); 
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  function updateVisualStatus(isComplete, isHeld, data) {
+      const circle = document.getElementById("progressCircle");
+      const appStatusSpan = document.getElementById("appStatus");
+      const downloadLink = document.getElementById("downloadLetter");
+      const percentText = document.getElementById("percentText");
+      
+      const currentProgress = circle.style.getPropertyValue('--progress') || '0%';
+      
+      circle.classList.remove('on-hold', 'processing'); 
+      percentText.classList.remove('on-hold');
+
+
+      if (isComplete) {
+          if (isHeld) {
+              circle.classList.add('on-hold'); 
+              circle.style.background = `conic-gradient(#ffc107 100%, #ddd 100%)`; 
+              percentText.classList.add('on-hold'); 
+              
+              appStatusSpan.innerText = "On Hold"; 
+              downloadLink.classList.remove('active-link');
+              downloadLink.href = "#"; 
+          } else {
+              circle.classList.add('processing'); 
+              circle.style.background = `conic-gradient(#28a745 100%, #ddd 100%)`; 
+              percentText.classList.remove('on-hold');
+              
+              appStatusSpan.innerText = "Application completed";
+              downloadLink.href = data.letter;
+              downloadLink.classList.add('active-link'); 
+          }
+      } else if (isHeld) {
+          circle.classList.add('on-hold'); 
+          circle.style.background = `conic-gradient(#ffc107 ${currentProgress}, #ddd ${currentProgress})`; 
+          percentText.classList.add('on-hold');
+
+          appStatusSpan.innerText = "On Hold"; 
+          downloadLink.classList.remove('active-link');
+          downloadLink.href = "#"; 
+      } else { 
+          circle.classList.add('processing'); 
+          circle.style.background = `conic-gradient(#28a745 ${currentProgress}, #ddd ${currentProgress})`; 
+          percentText.classList.remove('on-hold');
+
+          appStatusSpan.innerText = "Processing"; 
+          downloadLink.classList.remove('active-link');
+          downloadLink.href = "#"; 
+      }
+  }
+
+  function animateProgress() {
+      const circle = document.getElementById("progressCircle");
+      const percentText = document.getElementById("percentText");
+      
+      function animationLoop() {
+          if (currentAnimationId === null) return; 
+
+          const { startTime, durationMs, data, isCurrentlyHeld } = currentAppDetails; 
+          
+          const now = Date.now(); // Always UTC Epoch time
+          const elapsed = now - startTime; // Difference between two UTC Epoch times
+          
+          // Ensure progressRatio is not negative, which fixes the -456% issue
+          const progressRatio = Math.max(0, Math.min(elapsed / durationMs, 1)); 
+          const currentProgress = progressRatio * 100;
+          const isComplete = currentProgress >= 100;
+          
+          circle.style.setProperty('--progress', currentProgress + '%');
+          percentText.innerText = Math.floor(currentProgress) + '%';
+          
+          updateVisualStatus(isComplete, isCurrentlyHeld, data);
+          
+          if (!isComplete) {
+              currentAnimationId = requestAnimationFrame(animationLoop);
+          } else {
+              currentAnimationId = null; 
+          }
+      }
+      
+      if (currentAnimationId) {
+          cancelAnimationFrame(currentAnimationId);
+      }
+      currentAnimationId = requestAnimationFrame(animationLoop);
+  }
+
+  async function pollStatus() {
+    const { appId } = currentAppDetails;
+
+    if (!appId) {
+        if (statusPollingInterval) { clearInterval(statusPollingInterval); statusPollingInterval = null; }
+        return;
+    }
+    
+    try {
+        const sheetData = await fetchSheetData();
+        const latestData = sheetData.applications[appId];
+
+        if (!latestData) return;
+
+        const oldDurationMs = currentAppDetails.durationMs;
+        const newDurationMs = latestData.durationMs;
+        const durationChanged = oldDurationMs !== newDurationMs;
+        const isHoldStatusChanged = currentAppDetails.isCurrentlyHeld !== latestData.isHeld;
+        
+        let now = Date.now();
+        let elapsed = now - currentAppDetails.startTime; 
+
+        if (durationChanged) {
+            currentAppDetails.durationMs = newDurationMs;
+            updateSummaryUI(currentAppDetails.data);
+            animateProgress(); 
+        }
+
+        if (isHoldStatusChanged) {
+            currentAppDetails.isCurrentlyHeld = latestData.isHeld;
+            if (currentAnimationId === null) {
+                animateProgress();
+            }
+        }
+
+        const isComplete = elapsed >= currentAppDetails.durationMs; 
+
+        if (isComplete && !currentAppDetails.isCurrentlyHeld) {
+            if (statusPollingInterval) {
+                clearInterval(statusPollingInterval);
+                statusPollingInterval = null;
+                document.getElementById("progressCircle").style.setProperty('--progress', '100%');
+                document.getElementById("percentText").innerText = '100%';
+                updateVisualStatus(true, false, latestData);
+            }
+        }
+    } catch (error) {
+        console.error("Polling Error:", error.message);
+    }
+  }
+  
+  function updateSummaryUI(data) {
+      const startTime = currentAppDetails.startTime; 
+      const completionTime = startTime + currentAppDetails.durationMs; 
+
+      document.getElementById("fullName").innerText = data.name;
+      document.getElementById("nicNumber").innerText = data.nic;
+      document.getElementById("docNumber").innerText = data.docNumber;
+      document.getElementById("appType").innerText = data.type; 
+      // Creation Time is displayed in the user's local time (e.g., Sri Lanka Time)
+      document.getElementById("creationTime").innerText = formatDateTime(new Date(data.startTime)); 
+      document.getElementById("completionTime").innerText = formatDateTime(new Date(completionTime));
+      document.getElementById("summary").style.display = "block";
+  }
+
+
+  /**
+   * Main function to check status and start the process.
+   */
+  window.checkStatus = async function() {
+    const appIdToSearch = document.getElementById("appIdInput").value.trim();
+    const circle = document.getElementById("progressCircle");
+    const percentText = document.getElementById("percentText");
+    const errorMessage = document.getElementById("error-message");
+
+    // --- 1. Cleanup and Reset UI/State ---
+    if (statusPollingInterval) { clearInterval(statusPollingInterval); statusPollingInterval = null; }
+    if (currentAnimationId) { cancelAnimationFrame(currentAnimationId); currentAnimationId = null; }
+    currentAppDetails.appId = null; 
+
+    // UI Reset
+    errorMessage.innerText = "";
+    circle.style.setProperty('--progress', '0%');
+    percentText.innerText = '0%';
+    circle.classList.remove('on-hold', 'processing'); 
+    
+    // **දෝෂය නිවැරදි කිරීම සඳහා එකතු කරන ලද පේළි**
+    circle.style.background = `conic-gradient(#28a745 0%, #ddd 0%)`; // Background color/gradient reset
+    document.getElementById("appStatus").innerText = ''; // Status label reset
+    
+    document.getElementById("summary").style.display = "none";
+    document.getElementById("downloadLetter").classList.remove('active-link'); 
+    document.getElementById("downloadLetter").href = "#"; 
+    document.getElementById("creationTime").innerText = 'N/A';
+    document.getElementById("completionTime").innerText = 'N/A';
+
+    if (!appIdToSearch) {
+        errorMessage.innerText = "Please Enter Application No";
+        return;
+    }
+
+    // 2. Fetch Initial Data
+    let sheetData;
+    try {
+        sheetData = await fetchSheetData();
+    } catch (e) {
+        errorMessage.innerText = e.message;
+        return;
+    }
+    
+    const applications = sheetData.applications;
+    const data = applications[appIdToSearch];
+
+    if (!data) {
+        errorMessage.innerText = `No Data Found For Application`;
+        return;
+    }
+    
+    // 3. Update Global Active Data 
+    currentAppDetails = {
+        appId: appIdToSearch,
+        startTime: data.startTime, // UTC Epoch Time
+        durationMs: data.durationMs, 
+        data: data,
+        isCurrentlyHeld: data.isHeld, 
+    };
+    
+    const { startTime, durationMs } = currentAppDetails;
+    const POLLING_INTERVAL_MS = 1000; 
+
+    // 4. Start Time Check
+    if (startTime === 0) {
+        errorMessage.innerText = "Start Time not recorded in the Sheet (G Column is empty or invalid date).";
+        document.getElementById("appStatus").innerText = "Awaiting Time Stamp";
+        updateSummaryUI(data);
+        
+        statusPollingInterval = setInterval(pollStatus, POLLING_INTERVAL_MS); 
+        return;
+    }
+    
+    // 5. Initial Status and Animation Start
+    updateSummaryUI(data);
+
+    const now = Date.now(); // Current UTC Epoch Time
+    const elapsed = now - startTime;
+    const isComplete = elapsed >= durationMs;
+
+    statusPollingInterval = setInterval(pollStatus, POLLING_INTERVAL_MS);
+
+
+    if (isComplete) {
+        circle.style.setProperty('--progress', '100%');
+        percentText.innerText = '100%';
+        updateVisualStatus(true, currentAppDetails.isCurrentlyHeld, data); 
+    } else {
+        animateProgress(); 
+    }
+  }
+</script>
+</body>
+</html>
